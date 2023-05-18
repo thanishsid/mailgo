@@ -3,6 +3,7 @@ package mailgo
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"html/template"
 
 	"gopkg.in/gomail.v2"
@@ -31,26 +32,49 @@ func NewClient(c DialerConfig) (*Client, error) {
 	}, nil
 }
 
-type TemplateMailParams struct {
-	To           []string
-	Subject      string
-	TemplateName string
-	TemplateData any
+type SendMailParams struct {
+	To      []string
+	From    string
+	Subject string
+
+	// Add plain text part to the email, will be used as fallback if html is also included.
+	PlainText string
+
+	// Add html part to the email as a string, (User template params if you want to use templates passed to the client).
+	HTML string
+
+	// Template params to execute templates passed to the client.
+	TemaplateParams *SendMailTemplateParams
 }
 
-func (m Client) SendTemplateMail(p TemplateMailParams) error {
-	body := new(bytes.Buffer)
+type SendMailTemplateParams struct {
+	Name string
+	Data any
+}
 
-	if err := m.templates.ExecuteTemplate(body, p.TemplateName, p.TemplateData); err != nil {
-		return err
-	}
+func (m Client) SendMail(p SendMailParams) error {
 
 	msg := gomail.NewMessage(gomail.SetCharset("UTF-8"))
 
-	msg.SetHeader("From", m.dialer.Username)
+	msg.SetHeader("From", fmt.Sprintf("%q <%s>", p.From, m.dialer.Username))
 	msg.SetHeader("To", p.To...)
 	msg.SetHeader("Subject", p.Subject)
-	msg.SetBody("text/html", body.String())
+
+	if p.PlainText != "" {
+		msg.AddAlternative("text/plain", p.PlainText)
+	}
+
+	if p.HTML != "" {
+		msg.AddAlternative("text/html", p.HTML)
+	} else if p.TemaplateParams != nil && m.templates != nil {
+		body := new(bytes.Buffer)
+
+		if err := m.templates.ExecuteTemplate(body, p.TemaplateParams.Name, p.TemaplateParams.Data); err != nil {
+			return err
+		}
+
+		msg.AddAlternative("text/html", body.String())
+	}
 
 	return m.dialer.DialAndSend(msg)
 }
